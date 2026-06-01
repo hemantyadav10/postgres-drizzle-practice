@@ -1,27 +1,24 @@
-import type { NextFunction, Request, Response } from "express";
 import express from "express";
-import { env } from "./config/env.js";
-import userRouter from "./routes/user.routes.js";
+import globalErrorHandler from "./middlewares/globalErrorHandler.js";
+import projectRouter from "./modules/projects/project.routes.js";
+import taskRouter from "./modules/tasks/task.routes.js";
+import userRouter from "./modules/users/user.routes.js";
 import { httpLogger } from "./utils/logger.js";
 
+// Initialize Express app
 const app = express();
 
+// Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(httpLogger);
 
+// Routes
 app.use("/api/v1/users", userRouter);
+app.use("/api/v1/tasks", taskRouter);
+app.use("/api/v1/projects", projectRouter);
 
-app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
-  req.log.error({ err: error }, "An unexpected error occurred");
-  return res.status(500).json({
-    success: false,
-    statusCode: 500,
-    code: "INTERNAL_SERVER_ERROR",
-    message: "Internal Server Error",
-    requestId: req.id,
-  });
-});
+// Error handling middleware
+app.use(globalErrorHandler);
 
-export const port = env.PORT ?? 8080;
 export default app;

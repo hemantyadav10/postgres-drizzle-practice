@@ -1,14 +1,10 @@
 import { createInsertSchema, createUpdateSchema } from "drizzle-zod";
 import * as z from "zod";
-import { userProfiles, users } from "../db/schema.js";
+import { userProfiles, users } from "../../db/schema.js";
 
-const userIdParamsSchema = z.object({
-  userId: z.uuid("Invalid user ID"),
-});
+const userIdParamsSchema = z.object({ userId: z.uuid("Invalid user ID") });
 
-export const getUserByIdSchema = z.object({
-  params: userIdParamsSchema,
-});
+export const getUserByIdSchema = z.object({ params: userIdParamsSchema });
 
 export const createUserSchema = z.object({
   body: createInsertSchema(users, {
@@ -38,6 +34,9 @@ export const updateUserSchema = z.object({
     }),
 });
 
-export type CreateUserSchema = z.infer<typeof createUserSchema>;
-export type GetUserByIdSchema = z.infer<typeof getUserByIdSchema>;
-export type UpdateUserSchema = z.infer<typeof updateUserSchema>;
+export const getUserProjectsSchema = z.object({ params: userIdParamsSchema });
+
+export type CreateUser = z.infer<typeof createUserSchema>;
+export type GetUserById = z.infer<typeof getUserByIdSchema>;
+export type UpdateUser = z.infer<typeof updateUserSchema>;
+export type GetUserProjects = z.infer<typeof getUserProjectsSchema>;

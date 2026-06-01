@@ -38,8 +38,6 @@ async function seed() {
 
   const userMap = new Map(insertedUsers.map((u) => [u.email, u]));
 
-  console.log("User map:", userMap);
-
   const getUser = (email: string) => {
     const user = userMap.get(email);
     if (!user) throw new Error(`User not found: ${email}`);

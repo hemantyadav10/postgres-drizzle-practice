@@ -1,10 +1,12 @@
 import http from "node:http";
-import app, { port } from "./app.js";
+import app from "./app.js";
+import { env } from "./config/env.js";
 import { pool, testDbConnection } from "./db/index.js";
 import { logger } from "./utils/logger.js";
 
 let server: http.Server;
 let isShuttingDown: boolean = false;
+const port = env.PORT ?? 8080;
 
 async function startServer(): Promise<void> {
   try {

@@ -157,6 +157,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
     references: [userProfiles.userId],
   }),
   projects: many(projects),
+  tasks: many(tasks),
 }));
 
 // relations for the projects table
@@ -167,4 +168,22 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   }),
   tasks: many(tasks),
   members: many(projectMembers),
+}));
+
+export const tasksRelations = relations(tasks, ({ one }) => ({
+  assignee: one(users, {
+    fields: [tasks.assignedTo],
+    references: [users.id],
+  }),
+}));
+
+export const projectMembersRelations = relations(projectMembers, ({ one }) => ({
+  user: one(users, {
+    fields: [projectMembers.userId],
+    references: [users.id],
+  }),
+  project: one(projects, {
+    fields: [projectMembers.projectId],
+    references: [projects.id],
+  }),
 }));
