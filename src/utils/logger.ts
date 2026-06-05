@@ -24,7 +24,11 @@ export const logger = pino(config);
 
 export const httpLogger = pinoHttp({
   logger,
-  genReqId: (req) => req.id ?? randomUUID(),
+  genReqId: (req, res) => {
+    const requestId = String(req.id ?? randomUUID());
+    res.setHeader("X-Request-Id", requestId);
+    return requestId;
+  },
   autoLogging: {
     ignore(req) {
       return req.url === "/health" || req.url === "/metrics";

@@ -1,13 +1,5 @@
-import {
-  and,
-  count,
-  desc,
-  DrizzleQueryError,
-  eq,
-  getTableColumns,
-} from "drizzle-orm";
-import type { NextFunction, Request, Response } from "express";
-import { DatabaseError } from "pg";
+import { and, count, desc, eq, getTableColumns } from "drizzle-orm";
+import type { Request, Response } from "express";
 import { db } from "../../db/index.js";
 import {
   projectMembers,
@@ -16,6 +8,9 @@ import {
   userProfiles,
   users,
 } from "../../db/schema.js";
+import { NotFoundError } from "../../utils/api-error.js";
+import { ApiResponse } from "../../utils/api-response.js";
+import { recordExists } from "../../utils/helper.js";
 import type {
   AddProjectMember,
   CreateProject,
@@ -51,10 +46,7 @@ async function getAllProjects(_req: Request, res: Response): Promise<void> {
     .groupBy(projects.id, users.id, userProfiles.userId)
     .orderBy(desc(projects.createdAt));
 
-  res.status(200).json({
-    message: "Projects retrieved successfully",
-    data: rows,
-  });
+  res.status(200).json(ApiResponse.ok(rows, "Projects retrieved successfully"));
 }
 
 async function getProjectById(
@@ -86,15 +78,11 @@ async function getProjectById(
     .where(eq(projects.id, req.params.id))
     .groupBy(projects.id, users.id, userProfiles.userId);
 
-  if (!project) {
-    res.status(404).json({ message: "Project not found" });
-    return;
-  }
+  if (!project) throw new NotFoundError("Project not found");
 
-  res.status(200).json({
-    message: "Project retrieved successfully",
-    data: project,
-  });
+  res
+    .status(200)
+    .json(ApiResponse.ok(project, "Project retrieved successfully"));
 }
 
 async function deleteProject(
@@ -108,44 +96,24 @@ async function deleteProject(
     .where(eq(projects.id, projectId))
     .returning({ id: projects.id });
 
-  if (!deletedProject) {
-    res.status(404).json({ message: "Project not found" });
-    return;
-  }
+  if (!deletedProject) throw new NotFoundError("Project not found");
 
-  res.status(200).json({
-    message: "Project deleted successfully",
-    data: deletedProject,
-  });
+  res
+    .status(200)
+    .json(ApiResponse.ok(deletedProject, "Project deleted successfully"));
 }
 
 async function createProject(
   req: Request<{}, {}, CreateProject["body"]>,
   res: Response,
-  next: NextFunction,
 ): Promise<void> {
   const input = req.body;
 
-  try {
-    const [newProject] = await db.insert(projects).values(input).returning();
+  const [newProject] = await db.insert(projects).values(input).returning();
 
-    res.status(201).json({
-      message: "Project created successfully",
-      data: newProject,
-    });
-  } catch (err) {
-    if (
-      err instanceof DrizzleQueryError &&
-      err.cause instanceof DatabaseError &&
-      err.cause.code === "23503"
-    ) {
-      res.status(404).json({ message: "Owner not found" });
-      return;
-    }
-
-    next(err);
-    return;
-  }
+  res
+    .status(201)
+    .json(ApiResponse.created(newProject, "Project created successfully"));
 }
 
 async function updateProject(
@@ -161,15 +129,11 @@ async function updateProject(
     .where(eq(projects.id, projectId))
     .returning();
 
-  if (!updatedProject) {
-    res.status(404).json({ message: "Project not found" });
-    return;
-  }
+  if (!updatedProject) throw new NotFoundError("Project not found");
 
-  res.status(200).json({
-    message: "Project updated successfully",
-    data: updatedProject,
-  });
+  res
+    .status(200)
+    .json(ApiResponse.ok(updatedProject, "Project updated successfully"));
 }
 
 async function getProjectMembers(
@@ -178,16 +142,12 @@ async function getProjectMembers(
 ): Promise<void> {
   const projectId = req.params.id;
 
-  const [projectExists] = await db
-    .select({ id: projects.id })
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .limit(1);
+  const projectExists = await recordExists(
+    projects,
+    eq(projects.id, projectId),
+  );
 
-  if (!projectExists) {
-    res.status(404).json({ message: "Project not found" });
-    return;
-  }
+  if (!projectExists) throw new NotFoundError("Project not found");
 
   const data = await db
     .select({
@@ -205,64 +165,26 @@ async function getProjectMembers(
     .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
     .where(eq(projectMembers.projectId, projectId));
 
-  res.status(200).json({
-    message: "Project members fetched successfully",
-    data,
-  });
+  res
+    .status(200)
+    .json(ApiResponse.ok(data, "Project members fetched successfully"));
 }
 
 async function addProjectMember(
   req: Request<AddProjectMember["params"], {}, AddProjectMember["body"]>,
   res: Response,
-  next: NextFunction,
 ): Promise<void> {
   const projectId = req.params.id;
   const { userId, role } = req.body;
 
-  try {
-    const [newMember] = await db
-      .insert(projectMembers)
-      .values({ projectId, userId, role })
-      .returning();
+  const [newMember] = await db
+    .insert(projectMembers)
+    .values({ projectId, userId, role })
+    .returning();
 
-    res
-      .status(201)
-      .json({ message: "Member added successfully", data: newMember });
-  } catch (err) {
-    if (
-      err instanceof DrizzleQueryError &&
-      err.cause instanceof DatabaseError
-    ) {
-      const constraint =
-        typeof err.cause.constraint === "string"
-          ? err.cause.constraint
-          : undefined;
-
-      // Foreign key violation
-      if (err.cause.code === "23503") {
-        const messages: Record<string, string> = {
-          project_members_project_id_projects_id_fk: "Project not found",
-          project_members_user_id_users_id_fk: "User not found",
-        };
-        const message = constraint
-          ? (messages[constraint] ?? "Related resource not found")
-          : "Related resource not found";
-        res.status(404).json({ message });
-        return;
-      }
-
-      // Primary key violation — already a member
-      if (err.cause.code === "23505") {
-        res
-          .status(409)
-          .json({ message: "User is already a member of this project" });
-        return;
-      }
-    }
-
-    next(err);
-    return;
-  }
+  res
+    .status(201)
+    .json(ApiResponse.created(newMember, "Member added successfully"));
 }
 
 async function updateProjectMemberRole(
@@ -287,15 +209,11 @@ async function updateProjectMemberRole(
     )
     .returning();
 
-  if (!updatedMember) {
-    res.status(404).json({ message: "Project member not found" });
-    return;
-  }
+  if (!updatedMember) throw new NotFoundError("Project member not found");
 
-  res.status(200).json({
-    message: "Member role updated successfully",
-    data: updatedMember,
-  });
+  res
+    .status(200)
+    .json(ApiResponse.ok(updatedMember, "Member role updated successfully"));
 }
 
 async function removeProjectMember(
@@ -314,12 +232,9 @@ async function removeProjectMember(
     )
     .returning();
 
-  if (!removedMember) {
-    res.status(404).json({ message: "Project member not found" });
-    return;
-  }
+  if (!removedMember) throw new NotFoundError("Project member not found");
 
-  res.status(200).json({ message: "Member removed successfully" });
+  res.status(200).json(ApiResponse.ok(null, "Member removed successfully"));
 }
 
 async function getProjectTasks(
@@ -328,16 +243,12 @@ async function getProjectTasks(
 ) {
   const projectId = req.params.id;
 
-  const [project] = await db
-    .select({ id: projects.id })
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .limit(1);
+  const projectExists = await recordExists(
+    projects,
+    eq(projects.id, projectId),
+  );
 
-  if (!project) {
-    res.status(404).json({ message: "Project not found" });
-    return;
-  }
+  if (!projectExists) throw new NotFoundError("Project not found");
 
   const { projectId: _, ...taskColumns } = getTableColumns(tasks);
 
@@ -346,10 +257,9 @@ async function getProjectTasks(
     .from(tasks)
     .where(eq(tasks.projectId, projectId));
 
-  res.status(200).json({
-    message: "Project Tasks fetched successfully",
-    data: projectTasks,
-  });
+  res
+    .status(200)
+    .json(ApiResponse.ok(projectTasks, "Project Tasks fetched successfully"));
 }
 
 export {

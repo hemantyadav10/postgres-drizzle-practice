@@ -1,7 +1,6 @@
 import bcrypt from "bcrypt";
 import { count, eq, getTableColumns, sql } from "drizzle-orm";
-import type { NextFunction, Request, Response } from "express";
-import pg from "pg";
+import type { Request, Response } from "express";
 import { db } from "../../db/index.js";
 import {
   projectMembers,
@@ -10,6 +9,12 @@ import {
   userProfiles,
   users,
 } from "../../db/schema.js";
+import { recordExists } from "../../utils/helper.js";
+import {
+  ApiResponse,
+  ConflictError,
+  NotFoundError,
+} from "../../utils/index.js";
 import type {
   CreateUser,
   GetUserById,
@@ -23,16 +28,14 @@ async function getUsers(_req: Request, res: Response): Promise<void> {
     orderBy: (users, { desc }) => [desc(users.createdAt)],
   });
 
-  res
-    .status(200)
-    .json({ message: "Users retrieved successfully", data: users });
+  res.status(200).json(ApiResponse.ok(users, "Users retrieved successfully"));
 }
 
 async function getUserById(
   req: Request<GetUserById["params"]>,
   res: Response,
 ): Promise<void> {
-  const userId = req.params.userId;
+  const { userId } = req.params;
 
   const user = await db.query.users.findFirst({
     columns: { passwordHash: false },
@@ -40,12 +43,9 @@ async function getUserById(
     where: (users, { eq }) => eq(users.id, userId),
   });
 
-  if (!user) {
-    res.status(404).json({ message: "User not found" });
-    return;
-  }
+  if (!user) throw new NotFoundError("User not found");
 
-  res.status(200).json({ message: "User retrieved successfully", data: user });
+  res.status(200).json(ApiResponse.ok(user, "User retrieved successfully"));
 }
 
 async function createUser(
@@ -66,98 +66,64 @@ async function createUser(
     .returning({ id: users.id })
     .onConflictDoNothing({ target: users.email });
 
-  if (!createdUser) {
-    req.log.warn(
-      { email: input.email },
-      "Attempt to create user with existing email",
-    );
+  if (!createdUser) throw new ConflictError("Email already exists");
 
-    res.status(409).json({ message: "Email already exists" });
-    return;
-  }
-
-  res.status(201).json({
-    message: "User created successfully",
-    data: createdUser,
-  });
+  res
+    .status(201)
+    .json(ApiResponse.created(createdUser, "User created successfully"));
 }
 
 async function updateUser(
   req: Request<UpdateUser["params"], {}, UpdateUser["body"]>,
   res: Response,
-  next: NextFunction,
 ): Promise<void> {
   const input = req.body;
 
-  try {
-    const [updatedUser] = await db
-      .insert(userProfiles)
-      .values({
-        userId: req.params.userId,
-        bio: input.bio,
-        phone: input.phone,
-      })
-      .onConflictDoUpdate({
-        target: userProfiles.userId,
-        set: { bio: input.bio, phone: input.phone },
-      })
-      .returning();
+  const [updatedUser] = await db
+    .insert(userProfiles)
+    .values({
+      userId: req.params.userId,
+      bio: input.bio,
+      phone: input.phone,
+    })
+    .onConflictDoUpdate({
+      target: userProfiles.userId,
+      set: { bio: input.bio, phone: input.phone },
+    })
+    .returning();
 
-    res.status(200).json({
-      message: "User profile saved successfully",
-      data: updatedUser,
-    });
-  } catch (error) {
-    const cause = error instanceof Error ? error.cause : null;
-
-    if (cause instanceof pg.DatabaseError && cause.code === "23503") {
-      res.status(404).json({ message: "User not found" });
-      return;
-    }
-
-    next(error);
-    return;
-  }
+  res
+    .status(200)
+    .json(ApiResponse.ok(updatedUser, "User profile saved successfully"));
 }
 
 async function deleteUser(
   req: Request<GetUserById["params"]>,
   res: Response,
 ): Promise<void> {
-  const userId = req.params.userId;
+  const { userId } = req.params;
 
   const [deletedUser] = await db
     .delete(users)
     .where(eq(users.id, userId))
     .returning({ id: users.id });
 
-  if (!deletedUser) {
-    res.status(404).json({ message: "User not found" });
-    return;
-  }
+  if (!deletedUser) throw new NotFoundError("User not found");
 
-  res.status(200).json({
-    message: "User deleted successfully",
-    data: deletedUser,
-  });
+  res
+    .status(200)
+    .json(ApiResponse.ok(deletedUser, "User deleted successfully"));
 }
 
 async function getUserTasks(
   req: Request<GetUserById["params"]>,
   res: Response,
 ): Promise<void> {
-  const userId = req.params.userId;
+  const { userId } = req.params;
 
-  const [userExists] = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
+  const userExists = await recordExists(users, eq(users.id, userId));
 
-  if (!userExists) {
-    res.status(404).json({ message: "User not found" });
-    return;
-  }
+  if (!userExists) throw new NotFoundError("User not found");
 
   const { assignedTo, ...taskColumns } = getTableColumns(tasks);
 
@@ -166,17 +132,16 @@ async function getUserTasks(
     .from(tasks)
     .where(eq(tasks.assignedTo, userId));
 
-  res.status(200).json({
-    message: "User tasks retrieved successfully",
-    data: userTasks,
-  });
+  res
+    .status(200)
+    .json(ApiResponse.ok(userTasks, "User tasks retrieved successfully"));
 }
 
 async function getUserStats(
   req: Request<GetUserById["params"]>,
   res: Response,
 ): Promise<void> {
-  const userId = req.params.userId;
+  const { userId } = req.params;
 
   const [result] = await db
     .select({
@@ -211,35 +176,24 @@ async function getUserStats(
     .where(eq(users.id, userId))
     .groupBy(users.id);
 
-  if (!result) {
-    res.status(404).json({ message: "User not found" });
-    return;
-  }
+  if (!result) throw new NotFoundError("User not found");
 
   const { userId: _, ...stats } = result;
 
-  res.status(200).json({
-    message: "User stats retrieved successfully",
-    data: stats,
-  });
+  res
+    .status(200)
+    .json(ApiResponse.ok(stats, "User stats retrieved successfully"));
 }
 
 async function getUserProjects(
   req: Request<GetUserProjects["params"]>,
   res: Response,
 ): Promise<void> {
-  const userId = req.params.userId;
+  const { userId } = req.params;
 
-  const [userExists] = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
+  const userExists = await recordExists(users, eq(users.id, userId));
 
-  if (!userExists) {
-    res.status(404).json({ message: "User not found" });
-    return;
-  }
+  if (!userExists) throw new NotFoundError("User not found");
 
   const userProjects = await db
     .select({
@@ -252,10 +206,9 @@ async function getUserProjects(
     .innerJoin(projects, eq(projects.id, projectMembers.projectId))
     .where(eq(projectMembers.userId, userId));
 
-  res.status(200).json({
-    message: "User projects retrieved successfully",
-    data: userProjects,
-  });
+  res
+    .status(200)
+    .json(ApiResponse.ok(userProjects, "User projects retrieved successfully"));
 }
 
 export {

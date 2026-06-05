@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { validateRequest } from "../../middlewares/validateRequest.middleware.js";
+import { validateRequest } from "../../middlewares/validate-request.middleware.js";
 import {
   createTask,
   deleteTask,
